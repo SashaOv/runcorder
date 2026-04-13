@@ -1,0 +1,25 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "runcorder"
+version = "0.1.0"
+requires-python = ">=3.13"
+dependencies = [
+    "cyclopts>=3",
+]
+
+[project.scripts]
+runcorder = "runcorder.cli:app"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/runcorder"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.3",
+]
