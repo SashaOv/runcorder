@@ -9,7 +9,13 @@ from pathlib import Path
 from typing import Callable, Optional
 
 from runcorder import _context, _location
-from runcorder._artifact import ArtifactData, classify_frames, filter_stack, format_stack, write as write_artifact
+from runcorder._report import (
+    ReportMeta,
+    ReportWriter,
+    classify_frames,
+    filter_stack,
+    format_stack,
+)
 from runcorder._capture import install_exception_hook, uninstall_exception_hook
 from runcorder.watch import WatchDisplay
 
@@ -20,9 +26,9 @@ class InstrumentContext:
     Parameters
     ----------
     output:
-        Explicit artifact path.  When *None* the auto-named default is used.
+        Explicit report path.  When *None* the auto-named default is used.
     tail:
-        Buffer stdout/stderr and include a rolling tail in the artifact.
+        Buffer stdout/stderr and include a rolling tail in the report.
     watch_interval:
         Seconds between stack samples (min 0.5).
     watch_inplace:
@@ -48,6 +54,8 @@ class InstrumentContext:
         self._started_at: Optional[datetime] = None
         self._watch: Optional[WatchDisplay] = None
         self._exception_info: Optional[tuple] = None
+        self._meta: Optional[ReportMeta] = None
+        self._writer: Optional[ReportWriter] = None
         self._stopped: bool = False
 
     # ------------------------------------------------------------------
@@ -60,11 +68,19 @@ class InstrumentContext:
         _context._install()
         self._started_at = datetime.now(tz=timezone.utc)
 
+        self._meta = ReportMeta(
+            command=sys.argv[:],
+            cwd=str(Path.cwd()),
+            python=sys.version,
+            started_at=self._started_at.isoformat(),
+        )
+
         self._watch = WatchDisplay(
             watch_interval=self._watch_interval,
             watch_inplace=self._watch_inplace,
             install_trackers=self._tail,
             stuck_timeout=self._stuck_timeout,
+            on_stuck=self._on_stuck_fired,
         )
         self._watch.start()
 
@@ -77,94 +93,74 @@ class InstrumentContext:
 
         ended_at = datetime.now(tz=timezone.utc)
 
-        # 1. Stop watch display
         if self._watch is not None:
             self._watch.stop()
 
-        # 2. Restore excepthook
         uninstall_exception_hook()
 
-        # 3. Collect artifact data
         exc = exception_info or self._exception_info
-        stuck = self._watch is not None and self._watch.stuck_fired
+        if exc is not None:
+            self._get_or_create_writer().write_exception(self._build_exc_dict(exc))
 
-        if exc is not None or stuck:
-            self._write_artifact(exc, stuck, ended_at)
+        if self._writer is not None:
+            started = self._started_at or ended_at
+            duration = (ended_at - started).total_seconds()
+            exit_status: int | str = "exception" if exc is not None else 0
 
-        # 4. Uninstall context store
+            tail_text: Optional[str] = None
+            if self._tail and self._watch is not None:
+                all_lines = self._watch.tail_stdout() + self._watch.tail_stderr()
+                tail_text = "\n".join(all_lines) if all_lines else None
+
+            watch_snapshots = self._watch.snapshots if self._watch is not None else []
+
+            self._writer.finalize(
+                ended_at=ended_at.isoformat(),
+                duration_s=duration,
+                exit_status=exit_status,
+                watch_snapshots=watch_snapshots,
+                output_tail=tail_text,
+            )
+
         _context._uninstall()
 
-    def _write_artifact(
-        self,
-        exc: Optional[tuple],
-        stuck: bool,
-        ended_at: datetime,
-    ) -> None:
-        import traceback as tb_mod
-
-        output = self._output or _location.auto_name()
-        started = self._started_at or ended_at
-        duration = (ended_at - started).total_seconds()
-
-        # Determine output tail
-        tail_text: Optional[str] = None
-        if self._tail and self._watch is not None:
-            stdout_lines = self._watch.tail_stdout()
-            stderr_lines = self._watch.tail_stderr()
-            all_lines = stdout_lines + stderr_lines
-            tail_text = "\n".join(all_lines) if all_lines else None
-
-        # Build exception dict with filtered stack rendering
-        exc_dict: Optional[dict] = None
-        if exc is not None:
-            exc_type, exc_value, exc_tb = exc
-            # Extract frames from traceback and apply spec's boundary-preserving filter
-            raw_frames = []
-            tb = exc_tb
-            while tb is not None:
-                raw_frames.append(tb.tb_frame)
-                tb = tb.tb_next
-            if raw_frames:
-                classified = classify_frames(raw_frames)
-                filtered = filter_stack(classified)
-                filtered_str = format_stack(filtered)
-            else:
-                filtered_str = "".join(tb_mod.format_exception(exc_type, exc_value, exc_tb))
-            # Append the exception line itself
-            exc_line = f"{exc_type.__name__ if exc_type is not None else 'UnknownError'}: {exc_value}"
-            tb_str = f"{filtered_str}\n{exc_line}"
-            exc_dict = {
-                "type": exc_type.__name__ if exc_type is not None else "UnknownError",
-                "message": str(exc_value),
-                "traceback": tb_str,
-            }
-
-        # Build stuck snapshot text
-        stuck_text: Optional[str] = None
-        if stuck and self._watch is not None and self._watch.stuck_snapshot is not None:
-            classified = classify_frames(self._watch.stuck_snapshot)
-            filtered = filter_stack(classified)
-            stuck_text = format_stack(filtered)
-
-        data = ArtifactData(
-            command=sys.argv[:],
-            cwd=str(Path.cwd()),
-            python=sys.version,
-            started_at=started.isoformat(),
-            ended_at=ended_at.isoformat(),
-            duration_s=duration,
-            exit_status="exception" if exc is not None else 0,
-            exception=exc_dict,
-            stuck_snapshot=stuck_text,
-            watch_snapshots=self._watch.snapshots if self._watch else [],
-            output_tail=tail_text,
-        )
-
-        Path(output).parent.mkdir(parents=True, exist_ok=True)
-        write_artifact(data, Path(output))
+    def _get_or_create_writer(self) -> ReportWriter:
+        if self._writer is None:
+            path = Path(self._output or _location.auto_name())
+            assert self._meta is not None  # set in start()
+            self._writer = ReportWriter(path, self._meta)
+            print(f"[runcorder] report is written to {path}", file=sys.stderr)
+        return self._writer
 
     def _on_exception(self, exc_type, exc_value, exc_tb) -> None:
         self._exception_info = (exc_type, exc_value, exc_tb)
+
+    def _on_stuck_fired(self) -> None:
+        """Called from the watch thread when stuck is detected."""
+        if self._watch is None or self._watch.stuck_snapshot is None:
+            return
+        self._get_or_create_writer().write_stuck(self._watch.stuck_snapshot)
+
+    def _build_exc_dict(self, exc: tuple) -> dict:
+        import traceback as tb_mod
+        exc_type, exc_value, exc_tb = exc
+        raw_frames = []
+        tb = exc_tb
+        while tb is not None:
+            raw_frames.append(tb.tb_frame)
+            tb = tb.tb_next
+        if raw_frames:
+            classified = classify_frames(raw_frames)
+            filtered = filter_stack(classified)
+            filtered_str = format_stack(filtered)
+        else:
+            filtered_str = "".join(tb_mod.format_exception(exc_type, exc_value, exc_tb))
+        exc_line = f"{exc_type.__name__ if exc_type is not None else 'UnknownError'}: {exc_value}"
+        return {
+            "type": exc_type.__name__ if exc_type is not None else "UnknownError",
+            "message": str(exc_value),
+            "traceback": f"{filtered_str}\n{exc_line}",
+        }
 
     # ------------------------------------------------------------------
     # Context manager protocol
@@ -210,10 +206,8 @@ def instrument(func: Optional[Callable] = None, **kwargs):
         def main(): ...
     """
     if func is not None:
-        # Bare form: @instrument  (func is the decorated callable)
         return _wrap(func, {})
     else:
-        # Kwargs form: @instrument(**kwargs) → returns decorator
         def decorator(f: Callable) -> Callable:
             return _wrap(f, kwargs)
         return decorator

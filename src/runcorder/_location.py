@@ -1,4 +1,4 @@
-"""Artifact path resolution and log-space management."""
+"""Report path resolution and log-space management."""
 
 import os
 import sys
@@ -7,7 +7,7 @@ from pathlib import Path
 
 
 def default_log_dir() -> Path:
-    """Return the default log directory for runcorder artifacts.
+    """Return the default log directory for runcorder reports.
 
     On macOS or Windows, if ``~/.cache`` already exists, uses
     ``~/.cache/runcorder/logs/`` instead of the platform-specific location.
@@ -30,7 +30,7 @@ def default_log_dir() -> Path:
 
 
 def auto_name() -> Path:
-    """Return a timestamped artifact path inside the default log dir.
+    """Return a timestamped report path inside the default log dir.
 
     Format: ``YYMMDD-HHMMSS.md``
     The directory is created if it does not exist.

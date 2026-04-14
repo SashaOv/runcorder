@@ -9,7 +9,7 @@ class _WriteTracker:
 
     Detects when something writes through ``sys.stdout`` / ``sys.stderr``
     (foreign write detection for ``watch_inplace`` mode) and keeps a rolling
-    buffer of the last *tail_size* lines for artifact capture.
+    buffer of the last *tail_size* lines for report capture.
 
     The watch display bypasses this wrapper by writing directly to the
     original stream it stored before installing the tracker.

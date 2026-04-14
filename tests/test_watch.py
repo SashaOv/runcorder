@@ -10,7 +10,7 @@ from unittest.mock import patch
 import pytest
 
 import runcorder._context as ctx
-from runcorder.watch import WatchDisplay, _is_user_frame
+from runcorder.watch import WatchDisplay, _is_user_frame, _repr_diff
 
 
 # ---------------------------------------------------------------------------
@@ -199,6 +199,43 @@ def test_tail_stderr_after_install():
         assert d.tail_stderr() == ["hello"]
     finally:
         d.stop()
+
+
+# ---------------------------------------------------------------------------
+# _repr_diff
+
+def test_repr_diff_no_prev_short():
+    assert _repr_diff("42", None) == "42"
+
+def test_repr_diff_no_prev_long():
+    long = "x" * 30
+    result = _repr_diff(long, None)
+    assert len(result) <= 24
+    assert result.endswith("...")
+
+def test_repr_diff_unchanged():
+    # identical values — returns capped current (caller should skip unchanged)
+    assert _repr_diff("42", "42") == "42"
+
+def test_repr_diff_common_prefix():
+    # "epoch_001" → "epoch_002": prefix "epoch_00", diff "2"
+    result = _repr_diff("'epoch_002'", "'epoch_001'")
+    assert result.startswith("...")
+    assert "2" in result
+
+def test_repr_diff_common_suffix():
+    # "0.312" → "0.911": suffix "1", prefix "0.", diff varies
+    result = _repr_diff("0.911", "0.312")
+    assert "..." in result or len(result) <= 24
+
+def test_repr_diff_no_common():
+    assert _repr_diff("456", "123") == "456"
+
+def test_repr_diff_capped():
+    current = "a" * 10 + "X" * 20 + "b" * 10
+    prev    = "a" * 10 + "Y" * 20 + "b" * 10
+    result = _repr_diff(current, prev)
+    assert len(result) <= 24
 
 
 # ---------------------------------------------------------------------------

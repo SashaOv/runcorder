@@ -40,14 +40,14 @@ def test_exit_code_nonzero_on_exception(tmp_path):
     assert result.returncode != 0
 
 
-def test_artifact_written_on_exception(tmp_path):
+def test_report_written_on_exception(tmp_path):
     result = _run_runcorder("raise RuntimeError('test')", tmp_path)
-    # Some artifact should have been written somewhere (auto-named)
+    # Some report should have been written somewhere (auto-named)
     # We can't easily intercept the path, but we can confirm exit code
     assert result.returncode != 0
 
 
-def test_no_artifact_on_success(tmp_path):
+def test_no_report_on_success(tmp_path):
     """On clean exit, no .md file should appear in tmp_path."""
     result = _run_runcorder("x = 1 + 1", tmp_path)
     assert result.returncode == 0
@@ -73,21 +73,21 @@ def test_script_argv_passed(tmp_path):
 # ---------------------------------------------------------------------------
 # runcorder clean
 
-def _make_artifact(log_dir: Path, name: str, age_days: float) -> Path:
+def _make_report(log_dir: Path, name: str, age_days: float) -> Path:
     log_dir.mkdir(parents=True, exist_ok=True)
     p = log_dir / name
-    p.write_text("# artifact\n")
+    p.write_text("# report\n")
     mtime = time.time() - age_days * 86400
     os.utime(p, (mtime, mtime))
     return p
 
 
-def test_clean_removes_old_artifacts(tmp_path):
+def test_clean_removes_old_reports(tmp_path):
     from runcorder._location import default_log_dir
     import runcorder._location as loc
     log_dir = tmp_path / "logs"
-    old = _make_artifact(log_dir, "old.md", age_days=2)
-    fresh = _make_artifact(log_dir, "fresh.md", age_days=0)
+    old = _make_report(log_dir, "old.md", age_days=2)
+    fresh = _make_report(log_dir, "fresh.md", age_days=0)
 
     with patch.object(loc, "default_log_dir", return_value=log_dir):
         from runcorder.cli import clean
@@ -97,11 +97,11 @@ def test_clean_removes_old_artifacts(tmp_path):
     assert fresh.exists()
 
 
-def test_clean_keeps_fresh_artifacts(tmp_path):
+def test_clean_keeps_fresh_reports(tmp_path):
     from runcorder._location import default_log_dir
     import runcorder._location as loc
     log_dir = tmp_path / "logs"
-    fresh = _make_artifact(log_dir, "recent.md", age_days=0.5)
+    fresh = _make_report(log_dir, "recent.md", age_days=0.5)
 
     with patch.object(loc, "default_log_dir", return_value=log_dir):
         from runcorder.cli import clean
@@ -113,8 +113,8 @@ def test_clean_keeps_fresh_artifacts(tmp_path):
 def test_clean_hours_unit(tmp_path):
     import runcorder._location as loc
     log_dir = tmp_path / "logs"
-    old = _make_artifact(log_dir, "old.md", age_days=1)  # 24h old
-    fresh = _make_artifact(log_dir, "fresh.md", age_days=0.1)
+    old = _make_report(log_dir, "old.md", age_days=1)  # 24h old
+    fresh = _make_report(log_dir, "fresh.md", age_days=0.1)
 
     with patch.object(loc, "default_log_dir", return_value=log_dir):
         from runcorder.cli import clean

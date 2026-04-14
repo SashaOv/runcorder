@@ -7,6 +7,7 @@ import sysconfig
 import threading
 import time
 from pathlib import Path
+from collections.abc import Callable
 from typing import Optional
 
 from runcorder import _context
@@ -62,25 +63,80 @@ def _get_param_names(code) -> list[str]:
     return list(code.co_varnames[:n])
 
 
-def _format_args(frame) -> str:
-    """Format parameter values from f_locals into a compact arg string."""
+def _read_param_reprs(frame) -> dict[str, str]:
+    """Return {param_name: repr(value)} for up to 4 parameters of a frame."""
     param_names = _get_param_names(frame.f_code)
     if not param_names:
-        return ""
-    parts = []
+        return {}
     try:
         locals_dict = frame.f_locals
     except Exception:
-        return ""
+        return {}
+    result: dict[str, str] = {}
     for name in param_names[:4]:
-        val = locals_dict.get(name)
-        if val is None and name not in locals_dict:
+        if name not in locals_dict:
             continue
-        r = repr(val)
-        if len(r) > 30:
-            r = r[:27] + "..."
-        parts.append(f"{name}={r}")
-    return ", ".join(parts)
+        result[name] = repr(locals_dict[name])
+    return result
+
+
+def _repr_diff(current: str, prev: str | None, cap: int = 24) -> str:
+    """Return a compact display of *current* relative to *prev*.
+
+    If *prev* is None (first sample), return *current* capped at *cap* chars.
+    Otherwise return only the substring that differs, with ``...`` before/after
+    where the common prefix/suffix was omitted, capped at *cap* chars.
+    """
+    if prev is None or current == prev:
+        return current[:cap] if len(current) <= cap else current[:cap - 3] + "..."
+
+    # Common prefix length
+    prefix = 0
+    for a, b in zip(current, prev):
+        if a == b:
+            prefix += 1
+        else:
+            break
+
+    # Common suffix length (not overlapping the prefix)
+    suffix = 0
+    max_suffix = len(current) - prefix
+    for a, b in zip(reversed(current), reversed(prev)):
+        if suffix >= max_suffix:
+            break
+        if a == b:
+            suffix += 1
+        else:
+            break
+
+    diff = current[prefix: len(current) - suffix if suffix else len(current)]
+    result = ("..." if prefix else "") + diff + ("..." if suffix else "")
+    if len(result) > cap:
+        result = result[:cap - 3] + "..."
+    return result
+
+
+def _format_args_with_diff(
+    frame, prev_reprs: dict[str, str] | None
+) -> tuple[str, dict[str, str]]:
+    """Return (formatted_args_string, current_reprs).
+
+    *formatted_args_string* uses diff-repr for each param vs *prev_reprs*.
+    Only params whose repr changed (or are new) are included.
+    *current_reprs* is the raw repr dict for storage as the next prev.
+    """
+    current = _read_param_reprs(frame)
+    if not current:
+        return "", {}
+
+    parts: list[str] = []
+    for name, r in current.items():
+        prev_r = None if prev_reprs is None else prev_reprs.get(name)
+        if prev_r is not None and r == prev_r:
+            continue  # unchanged — omit
+        parts.append(f"{name}={_repr_diff(r, prev_r)}")
+
+    return ", ".join(parts), current
 
 
 # ---------------------------------------------------------------------------
@@ -113,17 +169,19 @@ class WatchDisplay:
         watch_inplace: bool = True,
         install_trackers: bool = False,
         stuck_timeout: float = 30.0,
+        on_stuck: Optional[Callable] = None,
     ) -> None:
         self._interval = max(0.5, watch_interval)
         self._watch_inplace = watch_inplace
         self._install_trackers = install_trackers
         self._stuck_timeout = stuck_timeout
+        self._on_stuck = on_stuck
 
         self._thread: Optional[threading.Thread] = None
         self._stop_event = threading.Event()
         self._started_at: float = 0.0
 
-        # Snapshots for artifact
+        # Snapshots for report
         self._snapshots: list[str] = []
         self._snapshots_lock = threading.Lock()
 
@@ -137,7 +195,7 @@ class WatchDisplay:
         self._tick_history: list[list[str]] = []
 
         # Parameter change detection — previous tick's arg strings per frame id
-        self._prev_args: dict[int, str] = {}
+        self._prev_args: dict[int, dict[str, str]] = {}
 
         # In-place line tracking
         self._watch_wrote_last: bool = False
@@ -204,7 +262,7 @@ class WatchDisplay:
             pass
 
     # ------------------------------------------------------------------
-    # Properties for artifact collection
+    # Properties for report collection
 
     @property
     def stuck_fired(self) -> bool:
@@ -284,6 +342,11 @@ class WatchDisplay:
         ):
             self._stuck_fired = True
             self._stuck_snapshot = visible[:]
+            if self._on_stuck is not None:
+                try:
+                    self._on_stuck()
+                except Exception:
+                    pass
 
         # ------------------------------------------------------------------
         # Stable prefix trimming — window of last 3 ticks
@@ -311,8 +374,8 @@ class WatchDisplay:
         ctx = _context.get()
         ctx_str = " ".join(f"{k}={v}" for k, v in ctx.items()) if ctx else ""
 
-        # Build arg strings and detect changes from previous sample
-        current_args: dict[int, str] = {}
+        # Build arg strings using diff-repr vs previous sample
+        current_args: dict[int, dict[str, str]] = {}
         chain_parts: list[str] = []
         for i, df in enumerate(display_frames):
             qn = (
@@ -320,15 +383,13 @@ class WatchDisplay:
                 if hasattr(df.f_code, "co_qualname")
                 else df.f_code.co_name
             )
-            args_str = _format_args(df)
             frame_key = id(df.f_code)
-            current_args[frame_key] = args_str
-            # Show args only when they changed since previous sample
-            prev = self._prev_args.get(frame_key)
-            show_args = args_str and args_str != prev
+            prev_reprs = self._prev_args.get(frame_key)
+            args_str, cur_reprs = _format_args_with_diff(df, prev_reprs)
+            current_args[frame_key] = cur_reprs
 
             is_leaf = i == len(display_frames) - 1
-            if show_args:
+            if args_str:
                 part = f"{qn}({args_str}):{df.f_lineno}" if is_leaf else f"{qn}({args_str})"
             else:
                 part = f"{qn}:{df.f_lineno}" if is_leaf else qn
@@ -377,13 +438,13 @@ class WatchDisplay:
         if self._watch_inplace and is_tty:
             if tracker is not None and tracker.foreign_wrote:
                 tracker.reset_foreign()
-                sink.write(f"{line}\n")
-                self._watch_wrote_last = False
+                self._watch_wrote_last = False  # foreign output broke the sequence
+            if self._watch_wrote_last:
+                # Cursor up, CR, clear line, write new content
+                sink.write(f"\033[A\r\033[K{line}\n")
             else:
-                # Overwrite: CR to column 0, write line, clear to end of line
-                sink.write(f"\r{line}\033[K")
-                sink.flush()
-                self._watch_wrote_last = True
+                sink.write(f"{line}\n")
+            self._watch_wrote_last = True
         else:
             sink.write(f"{line}\n")
             self._watch_wrote_last = False

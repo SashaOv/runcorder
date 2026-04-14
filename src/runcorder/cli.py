@@ -12,7 +12,7 @@ app = cyclopts.App(name="runcorder", help="Runcorder flight-recorder utilities."
 
 @app.command
 def clean(age: str = "1d") -> None:
-    """Delete runcorder artifacts older than AGE from the default log directory.
+    """Delete runcorder reports older than AGE from the default log directory.
 
     AGE format: a positive integer followed by ``d`` (days), ``h`` (hours),
     or ``m`` (minutes).  Examples: ``1d``, ``7d``, ``30d``, ``12h``.
@@ -55,7 +55,7 @@ def clean(age: str = "1d") -> None:
                 deleted += 1
 
     if deleted:
-        print(f"Deleted {deleted} artifact(s).")
+        print(f"Deleted {deleted} report(s).")
 
     # Remove cached size so it is recalculated on next run
     size_check = log_dir / "size_check"
