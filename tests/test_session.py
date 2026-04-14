@@ -73,6 +73,8 @@ def test_session_returns_instrument_context():
     with patch("runcorder._session._location.check_log_size", _no_check_log_size):
         s = session(watch_interval=0.5, stuck_timeout=0.0)
         assert isinstance(s, InstrumentContext)
+        # session() should not auto-start; __enter__ starts it
+        assert s._started_at is None
         s.stop()
 
 
@@ -80,6 +82,30 @@ def test_session_as_context_manager(tmp_path):
     with patch("runcorder._session._location.check_log_size", _no_check_log_size):
         with session(watch_interval=0.5, stuck_timeout=0.0):
             pass
+
+
+def test_start_is_idempotent():
+    with patch("runcorder._session._location.check_log_size", _no_check_log_size):
+        ic = InstrumentContext(watch_interval=0.5, stuck_timeout=0.0)
+        ic.start()
+        first_started = ic._started_at
+        ic.start()  # second call should be a no-op
+        assert ic._started_at is first_started
+        ic.stop()
+
+
+def test_artifact_exception_uses_filtered_traceback(tmp_path):
+    """Exception traceback in artifact should use the spec's filtered stack view."""
+    output = tmp_path / "artifact.md"
+    with patch("runcorder._session._location.check_log_size", _no_check_log_size):
+        with pytest.raises(ValueError):
+            with InstrumentContext(output=output, watch_interval=0.5, stuck_timeout=0.0):
+                raise ValueError("filtered test")
+    content = output.read_text()
+    # Should contain the exception line
+    assert "ValueError: filtered test" in content
+    # Should contain a File reference from the filtered stack
+    assert 'File "' in content
 
 
 # ---------------------------------------------------------------------------

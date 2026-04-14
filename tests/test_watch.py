@@ -126,7 +126,11 @@ def test_stuck_fires_once():
             co_filename="/user/script.py",
             co_qualname="some_func",
             co_name="some_func",
+            co_argcount=0,
+            co_kwonlyargcount=0,
+            co_varnames=(),
         )
+        f_locals = {}
 
     fake_frames = {main_tid: FakeFrame()}
 
@@ -195,6 +199,57 @@ def test_tail_stderr_after_install():
         assert d.tail_stderr() == ["hello"]
     finally:
         d.stop()
+
+
+# ---------------------------------------------------------------------------
+# Parameter display
+
+def test_line_includes_args_on_change():
+    """Args are shown when they change between samples."""
+    import types
+
+    main_tid = threading.main_thread().ident
+
+    class FakeFrame:
+        f_back = None
+        f_lineno = 42
+        f_code = types.SimpleNamespace(
+            co_filename="/user/script.py",
+            co_qualname="train",
+            co_name="train",
+            co_argcount=1,
+            co_kwonlyargcount=0,
+            co_varnames=("epoch",),
+        )
+        f_locals = {"epoch": 1}
+
+    fake_frames = {main_tid: FakeFrame()}
+
+    d, sink = _make_display_and_sink(watch_inplace=False)
+    with patch("sys._current_frames", return_value=fake_frames):
+        with patch("runcorder.watch._is_user_frame", return_value=True):
+            d._tick()  # first tick: args are new → shown
+    output = sink.getvalue()
+    assert "epoch=1" in output
+
+    # Second tick with same args → should NOT show args
+    sink.truncate(0)
+    sink.seek(0)
+    with patch("sys._current_frames", return_value=fake_frames):
+        with patch("runcorder.watch._is_user_frame", return_value=True):
+            d._tick()
+    output = sink.getvalue()
+    assert "epoch=1" not in output
+
+    # Third tick with changed args → should show args again
+    FakeFrame.f_locals = {"epoch": 2}
+    sink.truncate(0)
+    sink.seek(0)
+    with patch("sys._current_frames", return_value=fake_frames):
+        with patch("runcorder.watch._is_user_frame", return_value=True):
+            d._tick()
+    output = sink.getvalue()
+    assert "epoch=2" in output
 
 
 # ---------------------------------------------------------------------------

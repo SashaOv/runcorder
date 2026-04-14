@@ -54,6 +54,8 @@ class InstrumentContext:
     # Session lifecycle
 
     def start(self) -> None:
+        if self._started_at is not None:
+            return
         _location.check_log_size()
         _context._install()
         self._started_at = datetime.now(tz=timezone.utc)
@@ -112,11 +114,25 @@ class InstrumentContext:
             all_lines = stdout_lines + stderr_lines
             tail_text = "\n".join(all_lines) if all_lines else None
 
-        # Build exception dict
+        # Build exception dict with filtered stack rendering
         exc_dict: Optional[dict] = None
         if exc is not None:
             exc_type, exc_value, exc_tb = exc
-            tb_str = "".join(tb_mod.format_exception(exc_type, exc_value, exc_tb))
+            # Extract frames from traceback and apply spec's boundary-preserving filter
+            raw_frames = []
+            tb = exc_tb
+            while tb is not None:
+                raw_frames.append(tb.tb_frame)
+                tb = tb.tb_next
+            if raw_frames:
+                classified = classify_frames(raw_frames)
+                filtered = filter_stack(classified)
+                filtered_str = format_stack(filtered)
+            else:
+                filtered_str = "".join(tb_mod.format_exception(exc_type, exc_value, exc_tb))
+            # Append the exception line itself
+            exc_line = f"{exc_type.__name__ if exc_type is not None else 'UnknownError'}: {exc_value}"
+            tb_str = f"{filtered_str}\n{exc_line}"
             exc_dict = {
                 "type": exc_type.__name__ if exc_type is not None else "UnknownError",
                 "message": str(exc_value),
@@ -169,16 +185,14 @@ class InstrumentContext:
 # Public factory
 
 def session(**kwargs) -> InstrumentContext:
-    """Create, start, and return an :class:`InstrumentContext`.
+    """Create and return an :class:`InstrumentContext`.
 
     Intended for use as a context manager::
 
         with runcorder.session(tail=True):
             run_pipeline()
     """
-    ctx = InstrumentContext(**kwargs)
-    ctx.start()
-    return ctx
+    return InstrumentContext(**kwargs)
 
 
 # ---------------------------------------------------------------------------

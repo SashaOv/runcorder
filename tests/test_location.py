@@ -42,6 +42,30 @@ def test_default_log_dir_non_windows():
     assert "logs" in str(d)
 
 
+def test_default_log_dir_macos_with_dot_cache(tmp_path):
+    """On macOS, uses ~/.cache if it already exists."""
+    if sys.platform != "darwin":
+        pytest.skip("macOS-only test")
+    fake_home = tmp_path / "home"
+    fake_home.mkdir()
+    dot_cache = fake_home / ".cache"
+    dot_cache.mkdir()
+    with patch("runcorder._location.Path.home", return_value=fake_home):
+        d = loc.default_log_dir()
+    assert str(d) == str(dot_cache / "runcorder" / "logs")
+
+
+def test_default_log_dir_macos_without_dot_cache(tmp_path):
+    """On macOS without ~/.cache, falls back to ~/Library/Caches."""
+    if sys.platform != "darwin":
+        pytest.skip("macOS-only test")
+    fake_home = tmp_path / "home"
+    fake_home.mkdir()
+    with patch("runcorder._location.Path.home", return_value=fake_home):
+        d = loc.default_log_dir()
+    assert str(d) == str(fake_home / "Library" / "Caches" / "runcorder" / "logs")
+
+
 # ---------------------------------------------------------------------------
 # check_log_size — no warning below threshold
 

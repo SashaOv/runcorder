@@ -1,5 +1,6 @@
 """WatchDisplay — daemon thread that emits a live status line to stderr."""
 
+import atexit
 import os
 import sys
 import sysconfig
@@ -55,6 +56,33 @@ def _is_user_frame(frame) -> bool:
     return True
 
 
+def _get_param_names(code) -> list[str]:
+    """Return parameter names (excluding non-param locals) from a code object."""
+    n = code.co_argcount + code.co_kwonlyargcount
+    return list(code.co_varnames[:n])
+
+
+def _format_args(frame) -> str:
+    """Format parameter values from f_locals into a compact arg string."""
+    param_names = _get_param_names(frame.f_code)
+    if not param_names:
+        return ""
+    parts = []
+    try:
+        locals_dict = frame.f_locals
+    except Exception:
+        return ""
+    for name in param_names[:4]:
+        val = locals_dict.get(name)
+        if val is None and name not in locals_dict:
+            continue
+        r = repr(val)
+        if len(r) > 30:
+            r = r[:27] + "..."
+        parts.append(f"{name}={r}")
+    return ", ".join(parts)
+
+
 # ---------------------------------------------------------------------------
 # WatchDisplay
 
@@ -108,6 +136,12 @@ class WatchDisplay:
         # Stable prefix trimming — sliding window of last 3 ticks' qualname lists
         self._tick_history: list[list[str]] = []
 
+        # Parameter change detection — previous tick's arg strings per frame id
+        self._prev_args: dict[int, str] = {}
+
+        # In-place line tracking
+        self._watch_wrote_last: bool = False
+
         # Stream tracking
         self._orig_stdout = None
         self._orig_stderr = None
@@ -138,11 +172,23 @@ class WatchDisplay:
             target=self._run, daemon=True, name="runcorder-watch"
         )
         self._thread.start()
+        atexit.register(self.stop)
 
     def stop(self) -> None:
         self._stop_event.set()
         if self._thread is not None:
             self._thread.join(timeout=5.0)
+            self._thread = None
+
+        # Clear the last in-place status line
+        sink = self._orig_stderr if self._orig_stderr is not None else sys.stderr
+        try:
+            if self._watch_wrote_last and hasattr(sink, "isatty") and sink.isatty():
+                sink.write("\r\033[K")
+                sink.flush()
+        except Exception:
+            pass
+        self._watch_wrote_last = False
 
         # Restore streams
         if self._orig_stderr is not None:
@@ -151,6 +197,11 @@ class WatchDisplay:
         if self._orig_stdout is not None:
             sys.stdout = self._orig_stdout  # type: ignore[assignment]
             self._orig_stdout = None
+
+        try:
+            atexit.unregister(self.stop)
+        except Exception:
+            pass
 
     # ------------------------------------------------------------------
     # Properties for artifact collection
@@ -254,12 +305,14 @@ class WatchDisplay:
             display_frames = visible[-1:]
 
         # ------------------------------------------------------------------
-        # Build status line
+        # Build status line with parameter display
         elapsed_s = int(now - self._started_at)
         stuck_marker = " stuck?" if self._stuck_fired else ""
         ctx = _context.get()
         ctx_str = " ".join(f"{k}={v}" for k, v in ctx.items()) if ctx else ""
 
+        # Build arg strings and detect changes from previous sample
+        current_args: dict[int, str] = {}
         chain_parts: list[str] = []
         for i, df in enumerate(display_frames):
             qn = (
@@ -267,9 +320,21 @@ class WatchDisplay:
                 if hasattr(df.f_code, "co_qualname")
                 else df.f_code.co_name
             )
-            part = f"{qn}:{df.f_lineno}" if i == len(display_frames) - 1 else qn
+            args_str = _format_args(df)
+            frame_key = id(df.f_code)
+            current_args[frame_key] = args_str
+            # Show args only when they changed since previous sample
+            prev = self._prev_args.get(frame_key)
+            show_args = args_str and args_str != prev
+
+            is_leaf = i == len(display_frames) - 1
+            if show_args:
+                part = f"{qn}({args_str}):{df.f_lineno}" if is_leaf else f"{qn}({args_str})"
+            else:
+                part = f"{qn}:{df.f_lineno}" if is_leaf else qn
             chain_parts.append(part)
 
+        self._prev_args = current_args
         chain = " > ".join(chain_parts)
 
         if ctx_str:
@@ -313,9 +378,13 @@ class WatchDisplay:
             if tracker is not None and tracker.foreign_wrote:
                 tracker.reset_foreign()
                 sink.write(f"{line}\n")
+                self._watch_wrote_last = False
             else:
-                # Overwrite the line: CR to column 0, write, then spaces to clear
-                sink.write(f"\r{line}\r")
+                # Overwrite: CR to column 0, write line, clear to end of line
+                sink.write(f"\r{line}\033[K")
+                sink.flush()
+                self._watch_wrote_last = True
         else:
             sink.write(f"{line}\n")
+            self._watch_wrote_last = False
         sink.flush()

@@ -9,17 +9,24 @@ from pathlib import Path
 def default_log_dir() -> Path:
     """Return the default log directory for runcorder artifacts.
 
-    - macOS / Linux: ``~/.cache/runcorder/logs/``
-      (if ``~/.cache`` does not yet exist the same path is still returned;
-      it will be created on first write)
-    - Windows: ``%LOCALAPPDATA%\\runcorder\\logs``
+    On macOS or Windows, if ``~/.cache`` already exists, uses
+    ``~/.cache/runcorder/logs/`` instead of the platform-specific location.
+    On Linux, always uses ``~/.cache/runcorder/logs/``.
     """
+    home = Path.home()
+    dot_cache = home / ".cache"
+    if sys.platform == "linux":
+        return dot_cache / "runcorder" / "logs"
+    # macOS or Windows: prefer ~/.cache if it already exists
+    if dot_cache.is_dir():
+        return dot_cache / "runcorder" / "logs"
     if sys.platform == "win32":
         local = os.environ.get("LOCALAPPDATA")
         if local:
             return Path(local) / "runcorder" / "logs"
-        return Path.home() / "AppData" / "Local" / "runcorder" / "logs"
-    return Path.home() / ".cache" / "runcorder" / "logs"
+        return home / "AppData" / "Local" / "runcorder" / "logs"
+    # macOS without ~/.cache
+    return home / "Library" / "Caches" / "runcorder" / "logs"
 
 
 def auto_name() -> Path:
