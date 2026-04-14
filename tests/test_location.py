@@ -1,4 +1,5 @@
 import io
+import logging
 import os
 import re
 import sys
@@ -81,7 +82,7 @@ def test_check_log_size_no_warning_small(tmp_path, capsys):
     assert "runcorder log size" not in captured.err
 
 
-def test_check_log_size_warns_over_100mb(tmp_path, capsys):
+def test_check_log_size_warns_over_100mb(tmp_path, caplog):
     log_dir = tmp_path / "logs"
     log_dir.mkdir()
     # Write a size_check file with a value > 100 MB to avoid creating huge files
@@ -90,12 +91,12 @@ def test_check_log_size_warns_over_100mb(tmp_path, capsys):
     # Make it look fresh (< 1 day old)
     os.utime(size_check, None)
 
-    with patch.object(loc, "default_log_dir", return_value=log_dir):
-        loc.check_log_size()
+    with caplog.at_level(logging.WARNING, logger="runcorder"):
+        with patch.object(loc, "default_log_dir", return_value=log_dir):
+            loc.check_log_size()
 
-    captured = capsys.readouterr()
-    assert "runcorder log size" in captured.err
-    assert "runcorder clean" in captured.err
+    assert "runcorder log size" in caplog.text
+    assert "runcorder clean" in caplog.text
 
 
 def test_check_log_size_creates_size_check(tmp_path):

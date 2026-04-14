@@ -1,5 +1,6 @@
 """Tests for _session — InstrumentContext, session(), instrument decorator."""
 
+import logging
 import sys
 from unittest.mock import patch
 
@@ -225,24 +226,175 @@ def test_tail_output_in_report(tmp_path):
 # ---------------------------------------------------------------------------
 # Report announcement
 
-def test_report_announced_per_session(tmp_path, capsys):
+def test_report_announced_per_session(tmp_path, caplog):
     output1 = tmp_path / "run1.md"
     output2 = tmp_path / "run2.md"
 
-    with patch("runcorder._session._location.check_log_size", _no_check_log_size):
-        with pytest.raises(RuntimeError):
-            with InstrumentContext(output=output1, watch_interval=0.5, stuck_timeout=0.0):
-                raise RuntimeError("first failure")
+    with caplog.at_level(logging.INFO, logger="runcorder"):
+        with patch("runcorder._session._location.check_log_size", _no_check_log_size):
+            with pytest.raises(RuntimeError):
+                with InstrumentContext(output=output1, watch_interval=0.5, stuck_timeout=0.0):
+                    raise RuntimeError("first failure")
 
-    with patch("runcorder._session._location.check_log_size", _no_check_log_size):
-        with pytest.raises(RuntimeError):
-            with InstrumentContext(output=output2, watch_interval=0.5, stuck_timeout=0.0):
-                raise RuntimeError("second failure")
+        with patch("runcorder._session._location.check_log_size", _no_check_log_size):
+            with pytest.raises(RuntimeError):
+                with InstrumentContext(output=output2, watch_interval=0.5, stuck_timeout=0.0):
+                    raise RuntimeError("second failure")
 
-    stderr = capsys.readouterr().err
-    assert stderr.count("[runcorder] report is written to") == 2
-    assert str(output1) in stderr
-    assert str(output2) in stderr
+    assert caplog.text.count("[runcorder] report is written to") == 2
+    assert str(output1) in caplog.text
+    assert str(output2) in caplog.text
+
+
+# ---------------------------------------------------------------------------
+# short_traceback — one-shot excepthook replaces Python's default traceback
+
+def test_short_traceback_installs_hook_after_exception(tmp_path):
+    """After stop() writes a report, sys.excepthook is replaced when short_traceback=True."""
+    output = tmp_path / "report.md"
+    before = sys.excepthook
+    with patch("runcorder._session._location.check_log_size", _no_check_log_size):
+        ic = InstrumentContext(
+            output=output, watch_interval=0.5, stuck_timeout=0.0,
+            short_traceback=True,
+        )
+        ic.start()
+        try:
+            raise ValueError("trigger report")
+        except ValueError:
+            exc_info = sys.exc_info()
+        ic.stop(exception_info=exc_info)
+
+    try:
+        assert sys.excepthook is not before
+    finally:
+        sys.excepthook = before
+
+
+def test_short_traceback_hook_prints_type_and_path(tmp_path, capsys):
+    """Calling the installed hook prints ExceptionType: msg and the report path."""
+    output = tmp_path / "report.md"
+    before = sys.excepthook
+    with patch("runcorder._session._location.check_log_size", _no_check_log_size):
+        ic = InstrumentContext(
+            output=output, watch_interval=0.5, stuck_timeout=0.0,
+            short_traceback=True,
+        )
+        ic.start()
+        try:
+            raise ValueError("the message")
+        except ValueError:
+            exc_type, exc_value, exc_tb = sys.exc_info()
+        ic.stop(exception_info=(exc_type, exc_value, exc_tb))
+
+    hook = sys.excepthook
+    try:
+        hook(exc_type, exc_value, exc_tb)
+    finally:
+        sys.excepthook = before
+
+    err = capsys.readouterr().err
+    assert "ValueError: the message" in err
+    assert str(output) in err
+
+
+def test_short_traceback_hook_is_one_shot(tmp_path):
+    """After the hook fires once it restores the prior excepthook."""
+    output = tmp_path / "report.md"
+
+    def sentinel_hook(et, ev, tb):
+        pass
+
+    original = sys.excepthook
+    sys.excepthook = sentinel_hook
+
+    try:
+        with patch("runcorder._session._location.check_log_size", _no_check_log_size):
+            ic = InstrumentContext(
+                output=output, watch_interval=0.5, stuck_timeout=0.0,
+                short_traceback=True,
+            )
+            ic.start()
+            try:
+                raise ValueError("x")
+            except ValueError:
+                exc_info = sys.exc_info()
+            ic.stop(exception_info=exc_info)
+
+        hook = sys.excepthook
+        hook(*exc_info)
+        # After firing, sys.excepthook should be restored to sentinel_hook
+        assert sys.excepthook is sentinel_hook
+    finally:
+        sys.excepthook = original
+
+
+def test_short_traceback_false_does_not_install_hook(tmp_path):
+    """With short_traceback=False, sys.excepthook is unchanged after stop()."""
+    output = tmp_path / "report.md"
+    before = sys.excepthook
+    with patch("runcorder._session._location.check_log_size", _no_check_log_size):
+        ic = InstrumentContext(
+            output=output, watch_interval=0.5, stuck_timeout=0.0,
+            short_traceback=False,
+        )
+        ic.start()
+        try:
+            raise ValueError("x")
+        except ValueError:
+            exc_info = sys.exc_info()
+        ic.stop(exception_info=exc_info)
+
+    try:
+        assert sys.excepthook is before
+    finally:
+        sys.excepthook = before
+
+
+def test_short_traceback_no_hook_without_report():
+    """No hook installed when the session ends cleanly (no report written)."""
+    before = sys.excepthook
+    with patch("runcorder._session._location.check_log_size", _no_check_log_size):
+        ic = InstrumentContext(watch_interval=0.5, stuck_timeout=0.0, short_traceback=True)
+        ic.start()
+        ic.stop()
+
+    try:
+        assert sys.excepthook is before
+    finally:
+        sys.excepthook = before
+
+
+def test_short_traceback_hook_delegates_for_wrong_exception(tmp_path):
+    """Hook delegates to the original when called with a different exception instance."""
+    output = tmp_path / "report.md"
+    delegated = []
+    before = sys.excepthook
+
+    def fake_original(et, ev, tb):
+        delegated.append((et, ev))
+
+    sys.excepthook = fake_original
+    try:
+        with patch("runcorder._session._location.check_log_size", _no_check_log_size):
+            ic = InstrumentContext(
+                output=output, watch_interval=0.5, stuck_timeout=0.0,
+                short_traceback=True,
+            )
+            ic.start()
+            try:
+                raise ValueError("target")
+            except ValueError:
+                exc_info = sys.exc_info()
+            ic.stop(exception_info=exc_info)
+
+        hook = sys.excepthook
+        different = RuntimeError("unrelated")
+        hook(RuntimeError, different, None)
+        assert len(delegated) == 1
+        assert delegated[0][0] is RuntimeError
+    finally:
+        sys.excepthook = before
 
 
 def test_exception_appended_to_stuck_report(tmp_path):

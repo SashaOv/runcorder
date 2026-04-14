@@ -5,6 +5,8 @@ import sys
 import time
 from pathlib import Path
 
+from runcorder import _display
+
 
 def default_log_dir() -> Path:
     """Return the default log directory for runcorder reports.
@@ -79,7 +81,6 @@ def check_log_size() -> None:
 
     mb = total / (1024 * 1024)
     if mb > 100:
-        print(
-            f"runcorder log size is {mb:.0f} MB. Clean with `runcorder clean`",
-            file=sys.stderr,
+        _display.warning(
+            f"runcorder log size is {mb:.0f} MB. Clean with `runcorder clean`"
         )

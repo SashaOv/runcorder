@@ -369,6 +369,115 @@ def test_stuck_only_report_is_valid_without_finalize(tmp_path):
 # ---------------------------------------------------------------------------
 # ReportWriter — command list
 
+# ---------------------------------------------------------------------------
+# StackFrame args rendering
+
+def test_format_stack_frame_with_args():
+    """Args are rendered as name(k=v) in the formatted line."""
+    frame = StackFrame(
+        filename="/user/code.py",
+        lineno=10,
+        name="train_step",
+        is_user=True,
+        args=[("epoch", "5"), ("loss", "0.312")],
+    )
+    output = format_stack([frame])
+    assert "train_step(epoch=5, loss=0.312)" in output
+    assert 'line 10' in output
+
+
+def test_format_stack_frame_no_args_empty_parens():
+    """Frames with no captured args are rendered with empty parentheses."""
+    frame = StackFrame(
+        filename="/user/code.py",
+        lineno=5,
+        name="run",
+        is_user=True,
+        args=[],
+    )
+    output = format_stack([frame])
+    assert "in run()" in output
+
+
+def test_classify_frame_captures_args():
+    """_classify_frame reads parameter values from a real frame."""
+    import sys as _sys
+    from runcorder._report import classify_frames
+
+    def _helper(x, y):
+        return _sys._getframe()
+
+    frame = _helper(42, "hello")
+    classified = classify_frames([frame])
+    assert len(classified) == 1
+    sf = classified[0]
+    arg_dict = dict(sf.args)
+    assert arg_dict.get("x") == "42"
+    assert arg_dict.get("y") == "'hello'"
+
+
+def test_classify_frame_caps_long_repr():
+    """Repr values longer than 80 chars are capped with '...'."""
+    import sys as _sys
+    from runcorder._report import classify_frames
+
+    def _helper(big):
+        return _sys._getframe()
+
+    long_val = "x" * 200
+    frame = _helper(long_val)
+    classified = classify_frames([frame])
+    arg_dict = dict(classified[0].args)
+    r = arg_dict["big"]
+    assert len(r) <= 80
+    assert r.endswith("...")
+
+
+def test_classify_frame_no_args_for_no_param_function():
+    """Functions with no parameters produce an empty args list."""
+    import sys as _sys
+    from runcorder._report import classify_frames
+
+    def _helper():
+        return _sys._getframe()
+
+    frame = _helper()
+    classified = classify_frames([frame])
+    assert classified[0].args == []
+
+
+def test_exception_report_includes_args(tmp_path):
+    """When a real exception is written via InstrumentContext, the report's
+    traceback shows function arguments."""
+    from unittest.mock import patch
+    from runcorder._session import InstrumentContext
+
+    def _no_check():
+        pass
+
+    output = tmp_path / "report.md"
+
+    def outer(x):
+        inner(x * 2)
+
+    def inner(y):
+        raise ValueError("boom")
+
+    with patch("runcorder._session._location.check_log_size", _no_check):
+        import pytest as _pytest
+        with _pytest.raises(ValueError):
+            with InstrumentContext(output=output, watch_interval=0.5, stuck_timeout=0.0):
+                outer(7)
+
+    content = output.read_text()
+    # outer(x=7) and inner(y=14) should appear in the filtered traceback
+    assert "x=7" in content
+    assert "y=14" in content
+
+
+# ---------------------------------------------------------------------------
+# ReportWriter — command list
+
 def test_command_list_in_front_matter(tmp_path):
     meta = ReportMeta(
         command=["python", "-m", "runcorder", "my_script.py"],

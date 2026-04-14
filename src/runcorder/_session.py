@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable, Optional
 
-from runcorder import _context, _location
+from runcorder import _context, _display, _location
 from runcorder._report import (
     ReportMeta,
     ReportWriter,
@@ -44,12 +44,14 @@ class InstrumentContext:
         watch_interval: float = 3.0,
         watch_inplace: bool = True,
         stuck_timeout: float = 30.0,
+        short_traceback: bool = True,
     ) -> None:
         self._output = Path(output) if output is not None else None
         self._tail = tail
         self._watch_interval = watch_interval
         self._watch_inplace = watch_inplace
         self._stuck_timeout = stuck_timeout
+        self._short_traceback = short_traceback
 
         self._started_at: Optional[datetime] = None
         self._watch: Optional[WatchDisplay] = None
@@ -122,6 +124,17 @@ class InstrumentContext:
                 output_tail=tail_text,
             )
 
+        if (
+            self._short_traceback
+            and exc is not None
+            and self._writer is not None
+        ):
+            _install_short_traceback_hook(
+                report_path=self._writer.path,
+                exc_type=exc[0],
+                exc_value=exc[1],
+            )
+
         _context._uninstall()
 
     def _get_or_create_writer(self) -> ReportWriter:
@@ -129,7 +142,7 @@ class InstrumentContext:
             path = Path(self._output or _location.auto_name())
             assert self._meta is not None  # set in start()
             self._writer = ReportWriter(path, self._meta)
-            print(f"[runcorder] report is written to {path}", file=sys.stderr)
+            _display.info(f"[runcorder] report is written to {path}")
         return self._writer
 
     def _on_exception(self, exc_type, exc_value, exc_tb) -> None:
@@ -175,6 +188,37 @@ class InstrumentContext:
         else:
             self.stop()
         return False  # never suppress exceptions
+
+
+# ---------------------------------------------------------------------------
+# Short-traceback excepthook
+
+def _install_short_traceback_hook(
+    report_path: Path,
+    exc_type: type,
+    exc_value: BaseException,
+) -> None:
+    """Replace sys.excepthook with a one-shot hook that prints a concise
+    ``ExceptionType: message`` line and a pointer to the report.
+
+    The hook restores the previous excepthook on first call regardless of
+    whether the exception matches, so it never lingers after one use.  If the
+    exception does not match (a different exception reached the interpreter
+    top level first), the hook delegates to the original.
+    """
+    original = sys.excepthook
+    target_id = id(exc_value)
+
+    def _hook(et: type, ev: BaseException, tb) -> None:
+        sys.excepthook = original  # restore immediately (one-shot)
+        if id(ev) == target_id and et is exc_type:
+            sys.stderr.write(f"{et.__name__}: {ev}\n")
+            sys.stderr.write(f"[runcorder] see report at {report_path}\n")
+            sys.stderr.flush()
+        else:
+            original(et, ev, tb)
+
+    sys.excepthook = _hook
 
 
 # ---------------------------------------------------------------------------

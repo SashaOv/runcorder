@@ -3,7 +3,6 @@
 import atexit
 import os
 import sys
-import sysconfig
 import threading
 import time
 from pathlib import Path
@@ -11,73 +10,14 @@ from collections.abc import Callable
 from typing import Optional
 
 from runcorder import _context
-
-# ---------------------------------------------------------------------------
-# Exclusion index (pure-Python fallback; no native extension)
-
-def _build_exclusion_prefixes() -> tuple[str, ...]:
-    prefixes: set[str] = set()
-    paths = sysconfig.get_paths()
-    for key in ("stdlib", "platstdlib", "purelib", "platlib"):
-        p = paths.get(key)
-        if p:
-            try:
-                prefixes.add(str(Path(p).resolve()))
-            except (OSError, ValueError):
-                pass
-    for attr in ("prefix", "exec_prefix", "base_prefix"):
-        p = getattr(sys, attr, None)
-        if p:
-            lib_dir = Path(p) / "lib"
-            try:
-                prefixes.add(str(lib_dir.resolve()))
-            except (OSError, ValueError):
-                pass
-    return tuple(prefixes)
-
-
-_EXCLUSION_PREFIXES: tuple[str, ...] = _build_exclusion_prefixes()
-_RUNCORDER_PREFIX: str = str(Path(__file__).parent.resolve())
-
-
-def _is_user_frame(frame) -> bool:
-    """Return True if *frame* is from user code (not stdlib/site-packages/runcorder)."""
-    filename = frame.f_code.co_filename
-    if not filename or filename.startswith("<"):
-        return False
-    try:
-        p = str(Path(filename).resolve())
-    except (OSError, ValueError):
-        return False
-    if p.startswith(_RUNCORDER_PREFIX):
-        return False
-    for prefix in _EXCLUSION_PREFIXES:
-        if p.startswith(prefix):
-            return False
-    return True
-
-
-def _get_param_names(code) -> list[str]:
-    """Return parameter names (excluding non-param locals) from a code object."""
-    n = code.co_argcount + code.co_kwonlyargcount
-    return list(code.co_varnames[:n])
-
-
-def _read_param_reprs(frame) -> dict[str, str]:
-    """Return {param_name: repr(value)} for up to 4 parameters of a frame."""
-    param_names = _get_param_names(frame.f_code)
-    if not param_names:
-        return {}
-    try:
-        locals_dict = frame.f_locals
-    except Exception:
-        return {}
-    result: dict[str, str] = {}
-    for name in param_names[:4]:
-        if name not in locals_dict:
-            continue
-        result[name] = repr(locals_dict[name])
-    return result
+from runcorder._display import WatchSink
+from runcorder._frames import (
+    _EXCLUSION_PREFIXES,
+    _RUNCORDER_PREFIX,
+    _is_user_frame,
+    _get_param_names,
+    _read_param_reprs,
+)
 
 
 def _repr_diff(current: str, prev: str | None, cap: int = 24) -> str:
@@ -197,14 +137,14 @@ class WatchDisplay:
         # Parameter change detection — previous tick's arg strings per frame id
         self._prev_args: dict[int, dict[str, str]] = {}
 
-        # In-place line tracking
-        self._watch_wrote_last: bool = False
-
         # Stream tracking
         self._orig_stdout = None
         self._orig_stderr = None
         self._tracker_stdout = None
         self._tracker_stderr = None
+
+        # Output dispatch (created in start(), once streams are known)
+        self._sink: Optional[WatchSink] = None
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -226,6 +166,12 @@ class WatchDisplay:
             self._tracker_stdout = _WriteTracker(sys.stdout)
             sys.stdout = self._tracker_stdout  # type: ignore[assignment]
 
+        self._sink = WatchSink(
+            orig_stderr=self._orig_stderr,
+            tracker=self._tracker_stderr,
+            watch_inplace=self._watch_inplace,
+        )
+
         self._thread = threading.Thread(
             target=self._run, daemon=True, name="runcorder-watch"
         )
@@ -238,15 +184,8 @@ class WatchDisplay:
             self._thread.join(timeout=5.0)
             self._thread = None
 
-        # Clear the last in-place status line
-        sink = self._orig_stderr if self._orig_stderr is not None else sys.stderr
-        try:
-            if self._watch_wrote_last and hasattr(sink, "isatty") and sink.isatty():
-                sink.write("\r\033[K")
-                sink.flush()
-        except Exception:
-            pass
-        self._watch_wrote_last = False
+        if self._sink is not None:
+            self._sink.clear_inplace()
 
         # Restore streams
         if self._orig_stderr is not None:
@@ -426,26 +365,5 @@ class WatchDisplay:
         with self._snapshots_lock:
             self._snapshots.append(line)
 
-        # Write to the real (original) stderr, bypassing the tracker
-        sink = self._orig_stderr if self._orig_stderr is not None else sys.stderr
-
-        try:
-            is_tty = hasattr(sink, "isatty") and sink.isatty()
-        except Exception:
-            is_tty = False
-
-        tracker = self._tracker_stderr
-        if self._watch_inplace and is_tty:
-            if tracker is not None and tracker.foreign_wrote:
-                tracker.reset_foreign()
-                self._watch_wrote_last = False  # foreign output broke the sequence
-            if self._watch_wrote_last:
-                # Cursor up, CR, clear line, write new content
-                sink.write(f"\033[A\r\033[K{line}\n")
-            else:
-                sink.write(f"{line}\n")
-            self._watch_wrote_last = True
-        else:
-            sink.write(f"{line}\n")
-            self._watch_wrote_last = False
-        sink.flush()
+        if self._sink is not None:
+            self._sink.emit(line)

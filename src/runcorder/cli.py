@@ -7,6 +7,8 @@ from pathlib import Path
 
 import cyclopts
 
+from runcorder import _display
+
 app = cyclopts.App(name="runcorder", help="Runcorder flight-recorder utilities.")
 
 
@@ -22,10 +24,9 @@ def clean(age: str = "1d") -> None:
 
     match = re.fullmatch(r"(\d+)([dhm]?)", age.strip())
     if not match:
-        print(
+        _display.error(
             f"runcorder clean: invalid age {age!r}. "
-            "Use a number followed by d/h/m (e.g. 1d, 7d, 12h).",
-            file=sys.stderr,
+            "Use a number followed by d/h/m (e.g. 1d, 7d, 12h)."
         )
         raise SystemExit(1)
 

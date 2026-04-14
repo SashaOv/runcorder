@@ -1,6 +1,7 @@
 """Tests for WatchDisplay."""
 
 import io
+import logging
 import re
 import sys
 import time
@@ -48,11 +49,18 @@ def test_is_user_frame_excludes_angle_bracket():
 
 def _make_display_and_sink(**kwargs):
     """Create a WatchDisplay with a captured StringIO as its sink."""
+    from runcorder._display import WatchSink
+
     sink = io.StringIO()
     d = WatchDisplay(**kwargs)
     d._orig_stderr = sink  # inject fake sink
     d._started_at = time.monotonic()
     d._last_qualname_change = d._started_at
+    d._sink = WatchSink(
+        orig_stderr=sink,
+        tracker=None,
+        watch_inplace=d._watch_inplace,
+    )
     return d, sink
 
 
@@ -68,49 +76,51 @@ def _run_tick_in_thread(display):
     t.join(timeout=2.0)
 
 
-def test_line_format_basic():
+def test_line_format_basic(caplog):
+    caplog.set_level(logging.INFO, logger="runcorder")
     d, sink = _make_display_and_sink(watch_inplace=False)
-    # Patch _is_user_frame to accept this test frame
     with patch("runcorder.watch._is_user_frame", return_value=True):
         _run_tick_in_thread(d)
-    output = sink.getvalue()
-    # Should contain elapsed seconds pattern
-    assert re.search(r"\[\d+s\]", output)
+    assert re.search(r"\[\d+s\]", caplog.text)
 
 
-def test_line_includes_context_variables():
+def test_line_includes_context_variables(caplog):
+    caplog.set_level(logging.INFO, logger="runcorder")
     ctx._install()
     try:
         ctx.context(epoch=5, loss=0.31)
         d, sink = _make_display_and_sink(watch_inplace=False)
         with patch("runcorder.watch._is_user_frame", return_value=True):
             _run_tick_in_thread(d)
-        output = sink.getvalue()
-        assert "epoch=5" in output
-        assert "loss=0.31" in output
-        assert "|" in output  # separator between context and chain
+        assert "epoch=5" in caplog.text
+        assert "loss=0.31" in caplog.text
+        assert "|" in caplog.text  # separator between context and chain
     finally:
         ctx._uninstall()
 
 
-def test_line_no_context_no_pipe():
+def test_line_no_context_no_pipe(caplog):
+    caplog.set_level(logging.INFO, logger="runcorder")
     ctx._uninstall()
     d, sink = _make_display_and_sink(watch_inplace=False)
     with patch("runcorder.watch._is_user_frame", return_value=True):
         _run_tick_in_thread(d)
-    output = sink.getvalue()
-    # No context → no pipe separator
-    assert "|" not in output
+    # Inspect only runcorder records — the pytest log-capture formatter
+    # prefixes its own header that may contain a pipe.
+    runcorder_msgs = [
+        r.getMessage() for r in caplog.records if r.name == "runcorder"
+    ]
+    assert runcorder_msgs, "expected at least one runcorder log record"
+    assert all("|" not in m for m in runcorder_msgs)
 
 
-def test_stuck_marker_in_line():
+def test_stuck_marker_in_line(caplog):
+    caplog.set_level(logging.INFO, logger="runcorder")
     d, sink = _make_display_and_sink(watch_inplace=False, stuck_timeout=0.0)
-    # stuck_timeout=0 means it should never auto-fire; force it manually
     d._stuck_fired = True
     with patch("runcorder.watch._is_user_frame", return_value=True):
         _run_tick_in_thread(d)
-    output = sink.getvalue()
-    assert "stuck?" in output
+    assert "stuck?" in caplog.text
 
 
 def test_stuck_fires_once():
@@ -241,10 +251,11 @@ def test_repr_diff_capped():
 # ---------------------------------------------------------------------------
 # Parameter display
 
-def test_line_includes_args_on_change():
+def test_line_includes_args_on_change(caplog):
     """Args are shown when they change between samples."""
     import types
 
+    caplog.set_level(logging.INFO, logger="runcorder")
     main_tid = threading.main_thread().ident
 
     class FakeFrame:
@@ -266,27 +277,23 @@ def test_line_includes_args_on_change():
     with patch("sys._current_frames", return_value=fake_frames):
         with patch("runcorder.watch._is_user_frame", return_value=True):
             d._tick()  # first tick: args are new → shown
-    output = sink.getvalue()
-    assert "epoch=1" in output
+    assert "epoch=1" in caplog.text
 
-    # Second tick with same args → should NOT show args
-    sink.truncate(0)
-    sink.seek(0)
+    # Second tick with same args → should NOT show args (and the logger
+    # dedups the whole repeated line, so no new record should appear).
+    caplog.clear()
     with patch("sys._current_frames", return_value=fake_frames):
         with patch("runcorder.watch._is_user_frame", return_value=True):
             d._tick()
-    output = sink.getvalue()
-    assert "epoch=1" not in output
+    assert "epoch=1" not in caplog.text
 
-    # Third tick with changed args → should show args again
+    # Third tick with changed args → args shown again.
     FakeFrame.f_locals = {"epoch": 2}
-    sink.truncate(0)
-    sink.seek(0)
+    caplog.clear()
     with patch("sys._current_frames", return_value=fake_frames):
         with patch("runcorder.watch._is_user_frame", return_value=True):
             d._tick()
-    output = sink.getvalue()
-    assert "epoch=2" in output
+    assert "epoch=2" in caplog.text
 
 
 # ---------------------------------------------------------------------------

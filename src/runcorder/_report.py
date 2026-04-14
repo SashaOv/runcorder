@@ -14,12 +14,17 @@ the process is killed) remain valid Markdown on disk.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
+
+from runcorder._frames import _is_user_frame, _get_param_names
 
 
 # ---------------------------------------------------------------------------
 # Stack representation
+
+_ARG_REPR_CAP = 80  # max repr length per argument in the report
+
 
 @dataclass
 class StackFrame:
@@ -27,10 +32,27 @@ class StackFrame:
     lineno: int
     name: str
     is_user: bool
+    args: list[tuple[str, str]] = field(default_factory=list)
 
 
 def _classify_frame(frame) -> StackFrame:
-    from runcorder.watch import _is_user_frame
+    param_names = _get_param_names(frame.f_code)
+    args: list[tuple[str, str]] = []
+    if param_names:
+        try:
+            locals_dict = frame.f_locals
+            for name in param_names[:4]:
+                if name not in locals_dict:
+                    continue
+                try:
+                    r = repr(locals_dict[name])
+                except Exception:
+                    r = "<unrepr>"
+                if len(r) > _ARG_REPR_CAP:
+                    r = r[:_ARG_REPR_CAP - 3] + "..."
+                args.append((name, r))
+        except Exception:
+            pass
 
     return StackFrame(
         filename=frame.f_code.co_filename,
@@ -41,6 +63,7 @@ def _classify_frame(frame) -> StackFrame:
             else frame.f_code.co_name
         ),
         is_user=_is_user_frame(frame),
+        args=args,
     )
 
 
@@ -124,7 +147,8 @@ def format_stack(filtered: list[StackFrame | str]) -> str:
         if isinstance(item, str):
             lines.append(f"  {item}")
         else:
-            lines.append(f'  File "{item.filename}", line {item.lineno}, in {item.name}')
+            args_str = ", ".join(f"{k}={v}" for k, v in item.args)
+            lines.append(f'  File "{item.filename}", line {item.lineno}, in {item.name}({args_str})')
     return "\n".join(lines)
 
 
