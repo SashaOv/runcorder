@@ -124,6 +124,22 @@ Shared by `session()` and `instrument`:
 | `watch_interval` | `3.0` | Seconds between stack samples. Minimum `0.5`. |
 | `watch_inplace` | `True` | Rewrite the previous status line in place when no foreign output has appeared and the stderr sink supports in-place updates. Set `False` for native code or subprocesses that write to the terminal. |
 | `stuck_timeout` | `30.0` | Seconds of unchanged stack before a stuck notice is emitted and a snapshot is captured. Set `0` to disable. |
+| `short_traceback` | `True` | Replace Python's default traceback with a concise two-line notice pointing to the report. Set `False` to keep the full traceback on stderr alongside the report. |
+
+When `short_traceback=True` (the default), an uncaught exception prints:
+
+```
+ExceptionType: message
+[runcorder] see report at <path>
+```
+
+The full traceback is always preserved in the report.
+
+### Integration with logging
+
+Runcorder messages are written using standard Python logging, with one exception: the watch line uses direct stderr writes when `watch_inplace=True` and the process is running interactively on a TTY.
+
+When the watch line is emitted via logging, Runcorder only logs it when the line has changed from the previous sample. Runcorder does not modify logging settings.
 
 ### When a report is written
 
@@ -140,7 +156,7 @@ A Markdown file with a YAML front matter block followed by sections:
 
 - **Front matter** — `command`, `cwd`, `python`, `started_at`.
 - **Stuck snapshot** — filtered stack at the moment stuck was detected (when present).
-- **Exception** — type, message, and filtered traceback (on failure).
+- **Exception** — type, message, and filtered traceback (on failure). Each stack frame includes function arguments with their `repr()` values at capture time.
 - **Watch snapshots** — recent status lines with context variables.
 - **Output tail** — combined stdout/stderr tail (only when `tail=True`).
 - **Summary** — `ended_at`, `duration_s`, `exit_status` (integer or `"exception"`). Absent if the process is killed before the session finishes.
