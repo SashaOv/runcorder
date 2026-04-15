@@ -166,3 +166,26 @@ A Markdown file with a YAML front matter block followed by sections:
 - Watch samples the main thread only; no C-extension or subprocess frames.
 - Stream tracking is best-effort: native writes that bypass Python stream objects are not detected.
 - Not a TUI — the single-line display degrades to append-only output on non-interactive or non-rewritable sinks (redirected logs, notebook cells, batch-system log collectors).
+
+## Example
+
+[The example python script](../tests/example1.py) demonstrates the work of Runcoder in interactive and batch modes. Here is the example output in batch mode:
+
+```
+> python tests/example1.py --job
+epoch 1: starting 4 steps
+2026-04-15 13:16:06 INFO runcorder: [1s] stage=warmup epoch=1 loss=0.0681 | main > ... > train_step(epoch=1, step=3, batch_size=32):34
+epoch 2: starting 4 steps
+2026-04-15 13:16:07 INFO runcorder: [2s] stage=warmup epoch=2 loss=0.0264 | train_step(epoch=2):34
+epoch 3: starting 4 steps
+2026-04-15 13:16:08 INFO runcorder: [3s] stage=warmup epoch=3 loss=0.0293 | train_step(epoch=3):34
+entering long idle for 4.0s — stuck notice should fire
+2026-04-15 13:16:09 INFO runcorder: [4s] stage=idle epoch=3 | fake_stuck_phase(seconds=4.0):53
+2026-04-15 13:16:10 INFO runcorder: [5s] stage=idle epoch=3 | fake_stuck_phase:53
+2026-04-15 13:16:11 INFO runcorder: [6s] stage=idle epoch=3 | fake_stuck_phase:53
+2026-04-15 13:16:12 INFO runcorder: [runcorder] report is written to /Users/sasha/.cache/runcorder/logs/260415-131612.md
+2026-04-15 13:16:12 INFO runcorder: [7s stuck?] stage=idle epoch=3 | fake_stuck_phase:53
+RuntimeError: synthetic failure at end of pipeline
+[runcorder] see report at ~/.cache/runcorder/logs/260415-131612.md
+```
+
