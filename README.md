@@ -2,7 +2,13 @@
 
 An always-on flight recorder for Python scripts: live watch line while it runs, compact Markdown report when it crashes or gets stuck.
 
-See [docs/user.md](docs/user.md).
+## Installation
+
+```bash
+pip install runcorder
+```
+
+See [docs/user.md](docs/user.md) for more information.
 
 ## Development
 
