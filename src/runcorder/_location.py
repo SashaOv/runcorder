@@ -1,4 +1,7 @@
-"""Report path resolution and log-space management."""
+"""Report path resolution and log-space management.
+
+(spec) Report Location
+"""
 
 import os
 import sys

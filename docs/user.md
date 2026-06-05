@@ -77,6 +77,7 @@ Exit behavior:
 
 - script exits normally → exit status `0`
 - script raises `SystemExit` → that status is propagated
+- script raises `runcorder.UserError` → `Error: <message>` to stderr, exit `1`, no report
 - any other uncaught exception → report is written, non-zero exit
 
 ### `runcorder clean [AGE]`
@@ -104,6 +105,13 @@ def main(): ...
 def main(): ...
 ```
 
+By default, when the decorated function returns a non-`None` value, Runcorder prints it in a YAML-like format and the wrapper returns `None` — so frameworks that print a command's return value (e.g. cyclopts `@app.default`) don't print it a second time. Pass `wrap_result=False` to leave the return value untouched and suppress the display.
+
+```python
+@runcorder.instrument(wrap_result=False)
+def main(): ...
+```
+
 ### `runcorder.context(**kwargs)`
 
 Set or update session-level key/value pairs. Keys are additive across calls; pass `None` to remove a key. The current context renders as `key=value` pairs on every watch line and is attached to each watch snapshot in the report. Called outside an active session, it warns once and is otherwise a no-op.
@@ -111,6 +119,17 @@ Set or update session-level key/value pairs. Keys are additive across calls; pas
 ```python
 runcorder.context(epoch=5, loss=0.312)
 runcorder.context(loss=None)            # remove "loss"
+```
+
+### `runcorder.UserError`
+
+Raise `UserError` to signal a user-visible error — bad input, missing file, invalid config — that should not produce a debug report. Runcorder prints `Error: <message>` to stderr and writes no report. Under the CLI wrapper the process exits `1`; inside `session()` or an `@instrument`-decorated function the exception propagates after the message is printed, so the caller stays in control.
+
+```python
+from runcorder import UserError
+
+if not config_path.exists():
+    raise UserError(f"config not found: {config_path}")
 ```
 
 ### Session options

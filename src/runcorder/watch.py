@@ -1,4 +1,7 @@
-"""WatchDisplay — daemon thread that emits a live status line to stderr."""
+"""WatchDisplay — daemon thread that emits a live status line to stderr.
+
+(spec) Watch Display
+"""
 
 import atexit
 import os

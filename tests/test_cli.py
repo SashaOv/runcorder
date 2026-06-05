@@ -149,3 +149,30 @@ def test_clean_removes_size_check(tmp_path):
         clean("1d")
 
     assert not size_check.exists()
+
+
+# ---------------------------------------------------------------------------
+# UserError — no report, exit code 1, plain message
+
+def test_user_error_exits_nonzero(tmp_path):
+    result = _run_runcorder(
+        "from runcorder import UserError; raise UserError('bad input')", tmp_path
+    )
+    assert result.returncode == 1
+
+
+def test_user_error_no_report_written(tmp_path):
+    """UserError must not write any .md report file."""
+    _run_runcorder(
+        "from runcorder import UserError; raise UserError('bad input')", tmp_path
+    )
+    md_files = list(tmp_path.glob("*.md"))
+    assert md_files == []
+
+
+def test_user_error_plain_message_in_stderr(tmp_path):
+    result = _run_runcorder(
+        "from runcorder import UserError; raise UserError('not found')", tmp_path
+    )
+    assert "Error: not found" in result.stderr
+    assert "Traceback" not in result.stderr

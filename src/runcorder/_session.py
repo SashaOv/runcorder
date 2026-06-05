@@ -1,4 +1,9 @@
-"""InstrumentContext, session(), and the instrument decorator."""
+"""InstrumentContext, session(), and the instrument decorator.
+
+(spec) Integration
+(spec) UserError
+(spec) Display outcome
+"""
 
 from __future__ import annotations
 
@@ -8,7 +13,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable, Optional
 
-from runcorder import _context, _display, _location
+from runcorder import _context, _display, _errors, _location
 from runcorder._report import (
     ReportMeta,
     ReportWriter,
@@ -184,7 +189,12 @@ class InstrumentContext:
 
     def __exit__(self, exc_type, exc_value, exc_tb) -> bool:
         if exc_type is not None:
-            self.stop(exception_info=(exc_type, exc_value, exc_tb))
+            if issubclass(exc_type, _errors.UserError):
+                self.stop()
+                sys.stderr.write(f"Error: {exc_value}\n")
+                sys.stderr.flush()
+            else:
+                self.stop(exception_info=(exc_type, exc_value, exc_tb))
         else:
             self.stop()
         return False  # never suppress exceptions
@@ -238,7 +248,7 @@ def session(**kwargs) -> InstrumentContext:
 # ---------------------------------------------------------------------------
 # instrument decorator (bare + kwargs forms)
 
-def instrument(func: Optional[Callable] = None, **kwargs):
+def instrument(func: Optional[Callable] = None, *, wrap_result: bool = True, **kwargs):
     """Decorator that wraps a function in a runcorder session.
 
     Supports both bare and kwargs forms::
@@ -248,26 +258,42 @@ def instrument(func: Optional[Callable] = None, **kwargs):
 
         @instrument(output="run.md", tail=True)
         def main(): ...
+
+    ``wrap_result`` controls what happens when the function returns a non-None
+    value.  When ``True`` (default) runcorder prints the result in YAML-like
+    format and returns ``None`` so downstream frameworks (e.g. cyclopts
+    ``@app.default``) do not print it a second time.  Set ``False`` to leave
+    the return value untouched and suppress the display entirely.
     """
     if func is not None:
-        return _wrap(func, {})
+        return _wrap(func, {}, wrap_result=wrap_result)
     else:
         def decorator(f: Callable) -> Callable:
-            return _wrap(f, kwargs)
+            return _wrap(f, kwargs, wrap_result=wrap_result)
         return decorator
 
 
-def _wrap(func: Callable, kwargs: dict) -> Callable:
+def _wrap(func: Callable, kwargs: dict, wrap_result: bool = True) -> Callable:
     @functools.wraps(func)
     def wrapper(*args, **kw):
         ctx = InstrumentContext(**kwargs)
         ctx.start()
         exc_info = None
         try:
-            return func(*args, **kw)
+            result = func(*args, **kw)
+        except _errors.UserError as e:
+            ctx.stop()
+            sys.stderr.write(f"Error: {e}\n")
+            sys.stderr.flush()
+            raise
         except BaseException:
             exc_info = sys.exc_info()
             raise
+        else:
+            if result is not None and wrap_result:
+                _display.display_result(result)
+                return None  # runcorder owns the output; caller gets None
+            return result
         finally:
             ctx.stop(exception_info=exc_info)
 

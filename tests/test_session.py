@@ -143,13 +143,16 @@ def test_instrument_bare_reraises():
             func()
 
 
-def test_instrument_bare_returns_value():
+def test_instrument_bare_returns_none_when_result_displayed(capsys):
+    # When @instrument displays the result it returns None so downstream
+    # frameworks (e.g. cyclopts @app.default) don't double-print it.
     with patch("runcorder._session._location.check_log_size", _no_check_log_size):
         @instrument
         def func():
             return 42
 
-        assert func() == 42
+        assert func() is None
+    assert "42" in capsys.readouterr().out
 
 
 # ---------------------------------------------------------------------------
@@ -167,7 +170,7 @@ def test_instrument_kwargs_form(tmp_path):
     assert output.exists()
 
 
-def test_instrument_kwargs_no_report_on_success(tmp_path):
+def test_instrument_kwargs_no_report_on_success(tmp_path, capsys):
     output = tmp_path / "run.md"
     with patch("runcorder._session._location.check_log_size", _no_check_log_size):
         @instrument(output=output, watch_interval=0.5, stuck_timeout=0.0)
@@ -175,7 +178,8 @@ def test_instrument_kwargs_no_report_on_success(tmp_path):
             return "ok"
 
         result = func()
-    assert result == "ok"
+    assert result is None  # display_result took ownership
+    assert "ok" in capsys.readouterr().out
     assert not output.exists()
 
 
@@ -422,3 +426,140 @@ def test_exception_appended_to_stuck_report(tmp_path):
     # Front matter appears exactly once (no duplicate header from the second write)
     assert content.count("\n---\n") == 1
     assert content.startswith("---\n")
+
+
+# ---------------------------------------------------------------------------
+# UserError — no report, plain message
+
+def test_user_error_no_report_in_session(tmp_path):
+    """UserError inside session() must not write a report."""
+    from runcorder import UserError
+    output = tmp_path / "report.md"
+    with patch("runcorder._session._location.check_log_size", _no_check_log_size):
+        with pytest.raises(UserError):
+            with InstrumentContext(output=output, watch_interval=0.5, stuck_timeout=0.0):
+                raise UserError("bad input")
+    assert not output.exists()
+
+
+def test_user_error_message_printed_in_session(tmp_path, capsys):
+    """UserError inside session() prints Error: <message> to stderr."""
+    from runcorder import UserError
+    with patch("runcorder._session._location.check_log_size", _no_check_log_size):
+        with pytest.raises(UserError):
+            with InstrumentContext(watch_interval=0.5, stuck_timeout=0.0):
+                raise UserError("invalid configuration")
+    assert "Error: invalid configuration" in capsys.readouterr().err
+
+
+def test_user_error_no_report_in_instrument(tmp_path):
+    """UserError from @instrument must not write a report."""
+    from runcorder import UserError
+    output = tmp_path / "report.md"
+    with patch("runcorder._session._location.check_log_size", _no_check_log_size):
+        @instrument(output=output)
+        def func():
+            raise UserError("not found")
+
+        with pytest.raises(UserError):
+            func()
+    assert not output.exists()
+
+
+def test_user_error_message_printed_in_instrument(capsys):
+    """UserError from @instrument prints Error: <message> to stderr."""
+    from runcorder import UserError
+    with patch("runcorder._session._location.check_log_size", _no_check_log_size):
+        @instrument
+        def func():
+            raise UserError("file missing")
+
+        with pytest.raises(UserError):
+            func()
+    assert "Error: file missing" in capsys.readouterr().err
+
+
+# ---------------------------------------------------------------------------
+# Display outcome
+
+def test_display_outcome_scalar(capsys):
+    """@instrument prints a scalar return value as JSON."""
+    with patch("runcorder._session._location.check_log_size", _no_check_log_size):
+        @instrument
+        def func():
+            return 42
+
+        func()
+    assert "42" in capsys.readouterr().out
+
+
+def test_display_outcome_dict(capsys):
+    """@instrument prints a dict return value in YAML-like format."""
+    with patch("runcorder._session._location.check_log_size", _no_check_log_size):
+        @instrument
+        def func():
+            return {"loss": 0.312, "epoch": 5}
+
+        func()
+    out = capsys.readouterr().out
+    assert "loss: 0.312" in out
+    assert "epoch: 5" in out
+    assert '"loss"' not in out  # no JSON double-quoted keys
+
+
+def test_display_outcome_none_not_displayed(capsys):
+    """@instrument does not print anything when the function returns None."""
+    with patch("runcorder._session._location.check_log_size", _no_check_log_size):
+        @instrument
+        def func():
+            return None
+
+        func()
+    assert capsys.readouterr().out == ""
+
+
+def test_wrap_result_false_returns_value(capsys):
+    """wrap_result=False passes the return value through unchanged."""
+    with patch("runcorder._session._location.check_log_size", _no_check_log_size):
+        @instrument(wrap_result=False)
+        def func():
+            return {"key": "val"}
+
+        result = func()
+    assert result == {"key": "val"}
+    assert capsys.readouterr().out == ""
+
+
+def test_wrap_result_false_no_display(capsys):
+    """wrap_result=False produces no stdout output for a non-None return."""
+    with patch("runcorder._session._location.check_log_size", _no_check_log_size):
+        @instrument(wrap_result=False)
+        def func():
+            return 42
+
+        func()
+    assert capsys.readouterr().out == ""
+
+
+def test_wrap_result_true_returns_none(capsys):
+    """wrap_result=True (default) displays the result and returns None."""
+    with patch("runcorder._session._location.check_log_size", _no_check_log_size):
+        @instrument(wrap_result=True)
+        def func():
+            return 99
+
+        result = func()
+    assert result is None
+    assert "99" in capsys.readouterr().out
+
+
+def test_display_outcome_not_shown_on_exception(tmp_path, capsys):
+    """Display outcome must not fire when the function raises."""
+    with patch("runcorder._session._location.check_log_size", _no_check_log_size):
+        @instrument(output=tmp_path / "r.md")
+        def func():
+            raise ValueError("boom")
+
+        with pytest.raises(ValueError):
+            func()
+    assert capsys.readouterr().out == ""

@@ -1,5 +1,8 @@
 """Centralised output for runcorder.
 
+(spec) Integration with logging
+(spec) Display outcome
+
 All runcorder-originated messages go through the ``runcorder`` logger so they
 route predictably under batch-job logging configurations.  The watch line is
 special-cased: when ``watch_inplace=True`` and the session is writing to a
@@ -145,3 +148,38 @@ class WatchSink:
         except Exception:
             pass
         self._wrote_last_inplace = False
+
+
+# ---------------------------------------------------------------------------
+# Result display
+
+def display_result(value) -> None:
+    """Print a non-None function return value in a YAML-like format."""
+    print(_format_yaml(value))
+
+
+def _format_yaml(value, indent: int = 0) -> str:
+    prefix = "  " * indent
+    if isinstance(value, dict):
+        if not value:
+            return f"{prefix}{{}}"
+        lines = []
+        for k, v in value.items():
+            if isinstance(v, (dict, list)):
+                lines.append(f"{prefix}{k}:")
+                lines.append(_format_yaml(v, indent + 1))
+            else:
+                lines.append(f"{prefix}{k}: {v}")
+        return "\n".join(lines)
+    if isinstance(value, list):
+        if not value:
+            return f"{prefix}[]"
+        lines = []
+        for item in value:
+            if isinstance(item, (dict, list)):
+                lines.append(f"{prefix}-")
+                lines.append(_format_yaml(item, indent + 1))
+            else:
+                lines.append(f"{prefix}- {item}")
+        return "\n".join(lines)
+    return f"{prefix}{value}"

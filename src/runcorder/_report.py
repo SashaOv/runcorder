@@ -1,5 +1,7 @@
 """Report writer: incremental Markdown + YAML front matter.
 
+(spec) Report Format
+
 A *report* is the file runcorder writes when something notable happens
 (stuck detection or exception).  It is built up across multiple calls:
 

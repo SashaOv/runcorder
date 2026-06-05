@@ -1,4 +1,8 @@
-"""Entry point for ``python -m runcorder path/to/script.py [args...]``."""
+"""Entry point for ``python -m runcorder path/to/script.py [args...]``.
+
+(spec) Integration
+(spec) UserError
+"""
 
 import runpy
 import sys
@@ -25,6 +29,8 @@ def main() -> None:
 
     from runcorder._session import InstrumentContext
 
+    from runcorder._errors import UserError
+
     ctx = InstrumentContext()
     ctx.start()
     exc_info = None
@@ -33,6 +39,10 @@ def main() -> None:
     except SystemExit:
         ctx.stop()
         raise
+    except UserError as e:
+        ctx.stop()
+        sys.stderr.write(f"Error: {e}\n")
+        sys.exit(1)
     except BaseException:
         exc_info = sys.exc_info()
         ctx.stop(exception_info=exc_info)

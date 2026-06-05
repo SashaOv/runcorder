@@ -1,4 +1,7 @@
-"""sys.excepthook install / uninstall helpers."""
+"""sys.excepthook install / uninstall helpers.
+
+(spec) Automatic Capture Points
+"""
 
 import sys
 from typing import Callable, Optional

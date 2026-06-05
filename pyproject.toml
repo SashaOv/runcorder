@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "runcorder"
-version = "0.5.1"
+version = "0.5.2"
 description = "Always-on flight recorder for Python scripts: live watch line while it runs, compact Markdown report when it crashes or gets stuck."
 readme = "README.md"
 requires-python = ">=3.13"
