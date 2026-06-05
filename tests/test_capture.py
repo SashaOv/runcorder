@@ -41,7 +41,6 @@ def test_callback_is_called():
     try:
         raise ValueError("boom")
     except ValueError as e:
-        import traceback as tb
         sys.excepthook(ValueError, e, e.__traceback__)
 
     cap.uninstall_exception_hook()

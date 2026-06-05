@@ -7,6 +7,7 @@ from unittest.mock import patch
 import pytest
 
 import runcorder._context as ctx
+from runcorder import UserError
 from runcorder._session import InstrumentContext, instrument, session
 
 
@@ -404,14 +405,13 @@ def test_short_traceback_hook_delegates_for_wrong_exception(tmp_path):
 def test_exception_appended_to_stuck_report(tmp_path):
     """If stuck fires and then an exception occurs, the exception section is
     appended to the already-written stuck report (no duplicate header)."""
-    import sys as _sys
     output = tmp_path / "run.md"
     with patch("runcorder._session._location.check_log_size", _no_check_log_size):
         with pytest.raises(RuntimeError):
             with InstrumentContext(output=output, watch_interval=0.5, stuck_timeout=0.0) as ic:
                 # Simulate what the watch thread does before calling _on_stuck_fired:
                 # it sets _stuck_snapshot to the captured frames.
-                ic._watch._stuck_snapshot = [_sys._getframe()]
+                ic._watch._stuck_snapshot = [sys._getframe()]
                 ic._on_stuck_fired()
                 assert output.exists()
                 assert "## Stuck Snapshot" in output.read_text()
@@ -433,7 +433,7 @@ def test_exception_appended_to_stuck_report(tmp_path):
 
 def test_user_error_no_report_in_session(tmp_path):
     """UserError inside session() must not write a report."""
-    from runcorder import UserError
+
     output = tmp_path / "report.md"
     with patch("runcorder._session._location.check_log_size", _no_check_log_size):
         with pytest.raises(UserError):
@@ -444,7 +444,7 @@ def test_user_error_no_report_in_session(tmp_path):
 
 def test_user_error_message_printed_in_session(tmp_path, capsys):
     """UserError inside session() prints Error: <message> to stderr."""
-    from runcorder import UserError
+
     with patch("runcorder._session._location.check_log_size", _no_check_log_size):
         with pytest.raises(UserError):
             with InstrumentContext(watch_interval=0.5, stuck_timeout=0.0):
@@ -454,7 +454,7 @@ def test_user_error_message_printed_in_session(tmp_path, capsys):
 
 def test_user_error_no_report_in_instrument(tmp_path):
     """UserError from @instrument must not write a report."""
-    from runcorder import UserError
+
     output = tmp_path / "report.md"
     with patch("runcorder._session._location.check_log_size", _no_check_log_size):
         @instrument(output=output)
@@ -468,7 +468,7 @@ def test_user_error_no_report_in_instrument(tmp_path):
 
 def test_user_error_message_printed_in_instrument(capsys):
     """UserError from @instrument prints Error: <message> to stderr."""
-    from runcorder import UserError
+
     with patch("runcorder._session._location.check_log_size", _no_check_log_size):
         @instrument
         def func():

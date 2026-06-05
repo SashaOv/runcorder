@@ -6,11 +6,13 @@ import re
 import sys
 import time
 import threading
+import types
 from unittest.mock import patch
 
 import pytest
 
 import runcorder._context as ctx
+from runcorder._display import WatchSink
 from runcorder.watch import WatchDisplay, _is_user_frame, _repr_diff
 
 
@@ -24,12 +26,10 @@ def test_is_user_frame_for_test_file():
 
 
 def test_is_user_frame_excludes_stdlib():
-    import threading as _t
     # A frame inside threading is not user code
     frame = sys._getframe()
     # Use a synthetic frame by grabbing one from a stdlib function
     # We can't easily get a real stdlib frame here, so check via filename
-    import types
     code = compile("x = 1", "<stdin>", "exec")
     assert not _is_user_frame(types.SimpleNamespace(
         f_code=types.SimpleNamespace(co_filename="<stdin>")
@@ -37,7 +37,6 @@ def test_is_user_frame_excludes_stdlib():
 
 
 def test_is_user_frame_excludes_angle_bracket():
-    import types
     frame = types.SimpleNamespace(
         f_code=types.SimpleNamespace(co_filename="<string>")
     )
@@ -49,8 +48,6 @@ def test_is_user_frame_excludes_angle_bracket():
 
 def _make_display_and_sink(**kwargs):
     """Create a WatchDisplay with a captured StringIO as its sink."""
-    from runcorder._display import WatchSink
-
     sink = io.StringIO()
     d = WatchDisplay(**kwargs)
     d._orig_stderr = sink  # inject fake sink
@@ -125,8 +122,6 @@ def test_stuck_marker_in_line(caplog):
 
 def test_stuck_fires_once():
     """Stuck detection fires exactly once even across multiple ticks."""
-    import types
-
     main_tid = threading.main_thread().ident
 
     class FakeFrame:
@@ -253,8 +248,6 @@ def test_repr_diff_capped():
 
 def test_line_includes_args_on_change(caplog):
     """Args are shown when they change between samples."""
-    import types
-
     caplog.set_level(logging.INFO, logger="runcorder")
     main_tid = threading.main_thread().ident
 

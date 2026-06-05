@@ -9,7 +9,6 @@ import sys
 
 from runcorder._errors import UserError
 from runcorder._session import InstrumentContext
-from runcorder.cli import app
 
 
 def main() -> None:
@@ -23,6 +22,7 @@ def main() -> None:
 
     # If the first argument looks like a sub-command, delegate to the CLI app
     if sys.argv[1] in ("clean",):
+        from runcorder.cli import app  # noqa: PLC0415 — only needed for clean subcommand
         app()
         return
 

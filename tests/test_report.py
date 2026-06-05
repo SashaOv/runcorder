@@ -1,6 +1,8 @@
 """Tests for _report — stack filtering, ReportWriter incremental output."""
 
+import sys
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
@@ -8,9 +10,11 @@ from runcorder._report import (
     ReportMeta,
     ReportWriter,
     StackFrame,
+    classify_frames,
     filter_stack,
     format_stack,
 )
+from runcorder._session import InstrumentContext
 
 
 # ---------------------------------------------------------------------------
@@ -170,10 +174,10 @@ def test_header_written_on_first_exception(tmp_path):
 
 
 def test_header_written_on_first_stuck(tmp_path):
-    import sys as _sys
+
     p = tmp_path / "r.md"
     w = ReportWriter(p, _meta())
-    w.write_stuck([_sys._getframe()])
+    w.write_stuck([sys._getframe()])
     assert w.header_written
     content = p.read_text()
     assert content.startswith("---\n")
@@ -181,10 +185,10 @@ def test_header_written_on_first_stuck(tmp_path):
 
 def test_header_not_rewritten_on_second_section(tmp_path):
     """Front matter must appear exactly once across multiple writes."""
-    import sys as _sys
+
     p = tmp_path / "r.md"
     w = ReportWriter(p, _meta())
-    w.write_stuck([_sys._getframe()])
+    w.write_stuck([sys._getframe()])
     w.write_exception(_exc_dict())
     content = p.read_text()
     # Exactly two --- fences (open + close front matter)
@@ -229,20 +233,20 @@ def test_write_exception_section(tmp_path):
 
 
 def test_write_stuck_section(tmp_path):
-    import sys as _sys
+
     p = tmp_path / "r.md"
     w = ReportWriter(p, _meta())
-    w.write_stuck([_sys._getframe()])
+    w.write_stuck([sys._getframe()])
     content = p.read_text()
     assert "## Stuck Snapshot" in content
 
 
 def test_sections_appear_in_call_order(tmp_path):
     """Stuck-then-exception produces stuck section before exception section."""
-    import sys as _sys
+
     p = tmp_path / "r.md"
     w = ReportWriter(p, _meta())
-    w.write_stuck([_sys._getframe()])
+    w.write_stuck([sys._getframe()])
     w.write_exception(_exc_dict())
     content = p.read_text()
     assert content.index("## Stuck Snapshot") < content.index("## Exception")
@@ -250,11 +254,11 @@ def test_sections_appear_in_call_order(tmp_path):
 
 def test_exception_then_stuck_order(tmp_path):
     """Writer tolerates exception-before-stuck (unusual but valid)."""
-    import sys as _sys
+
     p = tmp_path / "r.md"
     w = ReportWriter(p, _meta())
     w.write_exception(_exc_dict())
-    w.write_stuck([_sys._getframe()])
+    w.write_stuck([sys._getframe()])
     content = p.read_text()
     assert content.index("## Exception") < content.index("## Stuck Snapshot")
 
@@ -355,10 +359,10 @@ def test_finalize_omits_output_tail_when_none(tmp_path):
 def test_stuck_only_report_is_valid_without_finalize(tmp_path):
     """If the process is killed after stuck fires (no finalize),
     the report file should still be a self-contained markdown document."""
-    import sys as _sys
+
     p = tmp_path / "r.md"
     w = ReportWriter(p, _meta())
-    w.write_stuck([_sys._getframe()])
+    w.write_stuck([sys._getframe()])
     content = p.read_text()
     assert content.startswith("---\n")
     assert "## Stuck Snapshot" in content
@@ -401,11 +405,9 @@ def test_format_stack_frame_no_args_empty_parens():
 
 def test_classify_frame_captures_args():
     """_classify_frame reads parameter values from a real frame."""
-    import sys as _sys
-    from runcorder._report import classify_frames
 
     def _helper(x, y):
-        return _sys._getframe()
+        return sys._getframe()
 
     frame = _helper(42, "hello")
     classified = classify_frames([frame])
@@ -418,11 +420,9 @@ def test_classify_frame_captures_args():
 
 def test_classify_frame_caps_long_repr():
     """Repr values longer than 80 chars are capped with '...'."""
-    import sys as _sys
-    from runcorder._report import classify_frames
 
     def _helper(big):
-        return _sys._getframe()
+        return sys._getframe()
 
     long_val = "x" * 200
     frame = _helper(long_val)
@@ -435,11 +435,9 @@ def test_classify_frame_caps_long_repr():
 
 def test_classify_frame_no_args_for_no_param_function():
     """Functions with no parameters produce an empty args list."""
-    import sys as _sys
-    from runcorder._report import classify_frames
 
     def _helper():
-        return _sys._getframe()
+        return sys._getframe()
 
     frame = _helper()
     classified = classify_frames([frame])
@@ -449,9 +447,6 @@ def test_classify_frame_no_args_for_no_param_function():
 def test_exception_report_includes_args(tmp_path):
     """When a real exception is written via InstrumentContext, the report's
     traceback shows function arguments."""
-    from unittest.mock import patch
-    from runcorder._session import InstrumentContext
-
     def _no_check():
         pass
 
@@ -464,8 +459,7 @@ def test_exception_report_includes_args(tmp_path):
         raise ValueError("boom")
 
     with patch("runcorder._session._location.check_log_size", _no_check):
-        import pytest as _pytest
-        with _pytest.raises(ValueError):
+        with pytest.raises(ValueError):
             with InstrumentContext(output=output, watch_interval=0.5, stuck_timeout=0.0):
                 outer(7)
 
