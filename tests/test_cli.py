@@ -83,13 +83,12 @@ def _make_report(log_dir: Path, name: str, age_days: float) -> Path:
 
 
 def test_clean_removes_old_reports(tmp_path):
-    from runcorder._location import default_log_dir
-    import runcorder._location as loc
+    import runcorder.cli as cli
     log_dir = tmp_path / "logs"
     old = _make_report(log_dir, "old.md", age_days=2)
     fresh = _make_report(log_dir, "fresh.md", age_days=0)
 
-    with patch.object(loc, "default_log_dir", return_value=log_dir):
+    with patch.object(cli, "default_log_dir", return_value=log_dir):
         from runcorder.cli import clean
         clean("1d")
 
@@ -98,12 +97,11 @@ def test_clean_removes_old_reports(tmp_path):
 
 
 def test_clean_keeps_fresh_reports(tmp_path):
-    from runcorder._location import default_log_dir
-    import runcorder._location as loc
+    import runcorder.cli as cli
     log_dir = tmp_path / "logs"
     fresh = _make_report(log_dir, "recent.md", age_days=0.5)
 
-    with patch.object(loc, "default_log_dir", return_value=log_dir):
+    with patch.object(cli, "default_log_dir", return_value=log_dir):
         from runcorder.cli import clean
         clean("1d")
 
@@ -111,12 +109,12 @@ def test_clean_keeps_fresh_reports(tmp_path):
 
 
 def test_clean_hours_unit(tmp_path):
-    import runcorder._location as loc
+    import runcorder.cli as cli
     log_dir = tmp_path / "logs"
     old = _make_report(log_dir, "old.md", age_days=1)  # 24h old
     fresh = _make_report(log_dir, "fresh.md", age_days=0.1)
 
-    with patch.object(loc, "default_log_dir", return_value=log_dir):
+    with patch.object(cli, "default_log_dir", return_value=log_dir):
         from runcorder.cli import clean
         clean("12h")
 
@@ -131,20 +129,20 @@ def test_clean_invalid_age_exits(tmp_path):
 
 
 def test_clean_nonexistent_dir_is_noop(tmp_path):
-    import runcorder._location as loc
-    with patch.object(loc, "default_log_dir", return_value=tmp_path / "nonexistent"):
+    import runcorder.cli as cli
+    with patch.object(cli, "default_log_dir", return_value=tmp_path / "nonexistent"):
         from runcorder.cli import clean
         clean("1d")  # should not raise
 
 
 def test_clean_removes_size_check(tmp_path):
-    import runcorder._location as loc
+    import runcorder.cli as cli
     log_dir = tmp_path / "logs"
     log_dir.mkdir()
     size_check = log_dir / "size_check"
     size_check.write_text("12345")
 
-    with patch.object(loc, "default_log_dir", return_value=log_dir):
+    with patch.object(cli, "default_log_dir", return_value=log_dir):
         from runcorder.cli import clean
         clean("1d")
 

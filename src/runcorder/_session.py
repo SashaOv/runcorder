@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import functools
 import sys
+import traceback as tb_mod
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable, Optional
@@ -160,7 +161,6 @@ class InstrumentContext:
         self._get_or_create_writer().write_stuck(self._watch.stuck_snapshot)
 
     def _build_exc_dict(self, exc: tuple) -> dict:
-        import traceback as tb_mod
         exc_type, exc_value, exc_tb = exc
         raw_frames = []
         tb = exc_tb

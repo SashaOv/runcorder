@@ -7,6 +7,10 @@
 import runpy
 import sys
 
+from runcorder._errors import UserError
+from runcorder._session import InstrumentContext
+from runcorder.cli import app
+
 
 def main() -> None:
     if len(sys.argv) < 2:
@@ -19,17 +23,12 @@ def main() -> None:
 
     # If the first argument looks like a sub-command, delegate to the CLI app
     if sys.argv[1] in ("clean",):
-        from runcorder.cli import app
         app()
         return
 
     script = sys.argv[1]
     # Shift argv so the script sees its own name and arguments
     sys.argv = sys.argv[1:]
-
-    from runcorder._session import InstrumentContext
-
-    from runcorder._errors import UserError
 
     ctx = InstrumentContext()
     ctx.start()

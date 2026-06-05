@@ -8,6 +8,7 @@ from pathlib import Path
 import cyclopts
 
 from runcorder import _display
+from runcorder._location import default_log_dir
 
 app = cyclopts.App(name="runcorder", help="Runcorder flight-recorder utilities.")
 
@@ -20,8 +21,6 @@ def clean(age: str = "1d") -> None:
     or ``m`` (minutes).  Examples: ``1d``, ``7d``, ``30d``, ``12h``.
     Default: ``1d``.
     """
-    from runcorder._location import default_log_dir
-
     match = re.fullmatch(r"(\d+)([dhm]?)", age.strip())
     if not match:
         _display.error(

@@ -14,6 +14,7 @@ from typing import Optional
 
 from runcorder import _context
 from runcorder._display import WatchSink
+from runcorder._tracker import _WriteTracker
 from runcorder._frames import (
     _EXCLUSION_PREFIXES,
     _RUNCORDER_PREFIX,
@@ -153,8 +154,6 @@ class WatchDisplay:
     # Lifecycle
 
     def start(self) -> None:
-        from runcorder._tracker import _WriteTracker
-
         self._started_at = time.monotonic()
         self._last_qualname_change = self._started_at
 

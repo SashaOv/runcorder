@@ -6,6 +6,7 @@
 import os
 import sys
 import time
+from datetime import datetime
 from pathlib import Path
 
 from runcorder import _display
@@ -42,7 +43,6 @@ def auto_name() -> Path:
     """
     log_dir = default_log_dir()
     log_dir.mkdir(parents=True, exist_ok=True)
-    from datetime import datetime
     ts = datetime.now().strftime("%y%m%d-%H%M%S")
     return log_dir / f"{ts}.md"
 
